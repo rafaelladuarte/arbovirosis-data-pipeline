@@ -253,10 +253,10 @@ Contém tabelas pré-agregadas prontas para consumo analítico. Entrega taxa de 
 
 | Checkpoint | Fase | Atividade | Tecnologias |
 |---|---|---|---|
-| ⏳ | Infra | Criar conta Databricks CE e AWS Free Tier. Criar bucket S3 (`sa-east-1`), usuário IAM com policy restrita ao bucket, Access Key. Configurar cluster com variáveis de ambiente AWS. Criar schemas `bronze`/`silver`/`gold` via Hive Metastore. Conectar Databricks Repos ao GitHub | Databricks CE · AWS S3 · IAM · Git · Hive Metastore |
-|  | Bronze | Download dos ZIPs SINAN Dengue 2020–2025 (`DENGBRxx.csv.zip`), extração em memória, upload na landing zone via `boto3`, leitura com PySpark (`inferSchema=false`) → `bronze.dengue_raw` particionada por `_ano_referencia` | `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
-|  | Bronze | Consumir API REST OpenDengue (Zika) via `httpx` com paginação por ano, salvar JSON bruto no S3, converter para `bronze.zika_raw` | `httpx` · PySpark · `boto3` · Delta Lake |
-|  | Bronze | Baixar dados Chikungunya (JSON/XML), parsear com `spark-xml` / `from_json`, gravar `bronze.chikungunya_raw` | `spark-xml` · PySpark · Delta Lake |
+| ❌ | Infra | Criar conta Databricks CE e AWS Free Tier. Criar bucket S3 (`sa-east-1`), usuário IAM com policy restrita ao bucket, Access Key. Configurar cluster com variáveis de ambiente AWS. Criar schemas `bronze`/`silver`/`gold` via Hive Metastore. Conectar Databricks Repos ao GitHub | Databricks CE · AWS S3 · IAM · Git · Hive Metastore |
+| ⏳ | Bronze | Download dos ZIPs SINAN Dengue 2020–2025 (`DENGBRxx.csv.zip`), extração em memória, upload na landing zone via `boto3`, leitura com PySpark (`inferSchema=false`) → `bronze.dengue` particionada por `_ano_referencia` | `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
+|  | Bronze | Baixar dados Zika (JSON), parsear com `spark-xml` / `from_json`, gravar `bronze.zika` | `spark-xml` · PySpark · Delta Lake |
+|  | Bronze | Baixar dados Chikungunya (XML), parsear com `spark-xml` / `from_json`, gravar `bronze.chikungunya` | `spark-xml` · PySpark · Delta Lake |
 |  | Bronze | Validar schemas das 3 tabelas com Great Expectations (nullability, tipos, ranges de data). Notebook de auditoria: contagem de registros por ano e fonte. Documentar dicionário de dados SINAN | Great Expectations · PySpark |
 
 ---
