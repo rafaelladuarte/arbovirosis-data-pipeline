@@ -1,0 +1,10 @@
+{
+    "name": "spark-delta",
+    "dockerComposeFile": "../docker-compose.yml",
+    "service": "spark",
+    "workspaceFolder": "/home/jovyan/work",
+    "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+    ]
+}

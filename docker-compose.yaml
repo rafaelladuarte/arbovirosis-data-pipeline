@@ -1,0 +1,11 @@
+version: "3.8"
+
+services:
+  spark:
+    build: .
+    container_name: spark-jupyter
+    ports:
+      - "8888:8888" # JupyterLab
+      - "4040:4040" # Spark UI
+    volumes:
+      - ./:/home/jovyan/work
