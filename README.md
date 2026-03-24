@@ -45,19 +45,6 @@ Este projeto foi desenvolvido intencionalmente com ferramentas **100% gratuitas*
 | **AWS IAM** | Sempre gratuito | Usuário com Access Key + Secret Key |
 | **GitHub** | Gratuito | Repositório público + Databricks Repos |
 
-### O que foi adaptado em relação ao ambiente de produção
-
-Como a Free Edition não oferece Unity Catalog nem Instance Profile, as seguintes adaptações foram feitas e documentadas para demonstrar consciência técnica:
-
-- **Autenticação S3:** credenciais via variáveis de ambiente no cluster (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) em vez de IAM Role — as credenciais nunca são hardcoded no código
-- **Protocolo S3:** uso de `s3a://` (Hadoop FileSystem) em vez de `s3://` (requer Instance Profile)
-- **Upload de arquivos brutos:** `boto3` em vez de `dbutils.fs.cp` para salvar CSVs na landing zone
-- **Governança:** Hive Metastore nativo em vez de Unity Catalog — schemas `bronze`, `silver` e `gold` criados via `CREATE DATABASE`
-- **Orquestração:** execução manual dos notebooks na ordem correta em vez de Databricks Workflows
-- **Ingestão incremental:** leitura batch com `spark.read` em vez de Auto Loader com SQS/SNS
-
-> Em um ambiente de produção, estas adaptações seriam revertidas para: IAM Role via Instance Profile, Unity Catalog com External Location, Databricks Workflows para orquestração e Auto Loader para ingestão incremental. Todas as transformações PySpark e a lógica de negócio permanecem idênticas.
-
 ---
 
 ## Arquitetura
@@ -131,8 +118,6 @@ s3://arbovirose-portfolio-dev/
     └── codigos_cid10.csv
 ```
 
-> **Acesso ao S3:** o Spark acessa o bucket via `s3a://` com credenciais configuradas nas variáveis de ambiente do cluster (`spark.conf.set("fs.s3a.access.key", ...)`). As credenciais não aparecem em nenhum notebook ou arquivo versionado no Git.
-
 ---
 
 ## Fontes de Dados
@@ -140,9 +125,9 @@ s3://arbovirose-portfolio-dev/
 | Doença | Formato | Fonte | URL |
 |---|---|---|---|
 | 🦟 **Dengue** | ZIP → **CSV** | SINAN / DATASUS | `s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Dengue/csv/DENGBRxx.csv.zip` |
-| 🦠 **Zika** | **API REST** (JSON) | SINAN / DATASUS | `https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Chikungunya/json/CHIKBRxx.json.zip` |
-| 🦗 **Chikungunya** | **XML** | SINAN / DATASUS | `https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Chikungunya/xml/CHIKBRxx.xml.zip` |
-| 🗺 **Municípios** | API REST (JSON) | IBGE | `servicodados.ibge.gov.br/api/v1/localidades/municipios` |
+| 🦠 **Zika** | **ZIP** (JSON) | SINAN / DATASUS | `https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Chikungunya/json/CHIKBRxx.json.zip` |
+| 🦗 **Chikungunya** | **ZIP** (XML) | SINAN / DATASUS | `https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Chikungunya/xml/CHIKBRxx.xml.zip` |
+| 🗺 **Municípios** | **API REST** (JSON) | IBGE | `servicodados.ibge.gov.br/api/v1/localidades/municipios` |
 | 🌧 **Clima** | CSV | INMET BDMEP | `bdmep.inmet.gov.br` |
 
 **Período coberto:** 2020 – 2025 (6 anos de dados, sufixos `20` a `25` no nome do arquivo)
@@ -158,8 +143,8 @@ arbovirose-pipeline/
 │   ├── 00_setup_ambiente.py            # Configura S3, cria schemas, testa conexão
 │   ├── bronze/
 │   │   ├── 01_ingestao_dengue_csv.py   # Download ZIP → CSV → Delta (s3a)
-│   │   ├── 02_ingestao_zika_api.py     # API REST → JSON → Delta
-│   │   └── 03_ingestao_chikungunya.py  # XML → Delta
+│   │   ├── 02_ingestao_zika_api.py     # Download ZIP → JSON → Delta
+│   │   └── 03_ingestao_chikungunya.py  # Download ZIP → XML → Delta
 │   ├── silver/
 │   │   ├── 04_limpeza_dedup.py         # Dedup + tipagem + nulos
 │   │   ├── 05_enriquecimento_ibge.py   # Join IBGE + semana epidemiológica
@@ -196,9 +181,6 @@ arbovirose-pipeline/
 ├── requirements.txt
 └── README.md
 ```
-
-> **⚠️ Segurança:** o arquivo `.gitignore` exclui explicitamente qualquer arquivo `.env`, arquivos de credenciais e a pasta `data/raw/`. Nenhuma Access Key deve ser commitada no repositório.
-
 ---
 
 ## Tecnologias Utilizadas
@@ -255,8 +237,8 @@ Contém tabelas pré-agregadas prontas para consumo analítico. Entrega taxa de 
 |---|---|---|---|
 | ❌ | Infra | Criar conta Databricks CE e AWS Free Tier. Criar bucket S3 (`sa-east-1`), usuário IAM com policy restrita ao bucket, Access Key. Configurar cluster com variáveis de ambiente AWS. Criar schemas `bronze`/`silver`/`gold` via Hive Metastore. Conectar Databricks Repos ao GitHub | Databricks CE · AWS S3 · IAM · Git · Hive Metastore |
 | ⏳ | Bronze |Baixar dados Dengue (CSV), enviar para o S3, ler com PySpark e gravar `bronze.dengue` em Delta Lake particionada por `_ano_referencia`| `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
-|  | Bronze | Baixar dados Zika (JSON), enviar para o S3, ler com PySpark e gravar `bronze.zika` em Delta Lake particionada por `_ano_referencia` | `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
-|  | Bronze | Baixar dados Chikungunya (XML), enviar para o S3, ler com PySpark e gravar `bronze.chikungunya` em Delta Lake particionada por `_ano_referencia`| `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
+| ⏳ | Bronze | Baixar dados Zika (JSON), enviar para o S3, ler com PySpark e gravar `bronze.zika` em Delta Lake particionada por `_ano_referencia` | `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
+| ⏳| Bronze | Baixar dados Chikungunya (XML), enviar para o S3, ler com PySpark e gravar `bronze.chikungunya` em Delta Lake particionada por `_ano_referencia`| `requests` · `boto3` · PySpark · Delta Lake · `s3a://` |
 |  | Bronze | Validar schemas das 3 tabelas com Great Expectations (nullability, tipos, ranges de data). Notebook de auditoria: contagem de registros por ano e fonte. Documentar dicionário de dados SINAN | Great Expectations · PySpark |
 
 ---
