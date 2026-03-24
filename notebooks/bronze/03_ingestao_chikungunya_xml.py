@@ -1,9 +1,9 @@
 """
-ingestao_bronze_zika.py
+ingestao_bronze_chikungunya.py
 =========================
-Camada Bronze — Ingestão dos microdados de Zika (SINAN/DATASUS)
-Fonte : https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Zikavirus/json/ZIKABRxx.json.zip
-Fluxo : download ZIP → extração JSON em memória → leitura PySpark → gravação Delta Table no S3
+Camada Bronze — Ingestão dos microdados de Chikungunya (SINAN/DATASUS)
+Fonte : https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Dengue/csv/DENGBRxx.csv.zip
+Fluxo : download ZIP → extração XML em memória → leitura PySpark → gravação Delta Table no S3
 
 """
 
@@ -14,10 +14,10 @@ from pyspark.sql import SparkSession
 
 ANO = "23"
 
-FILE_ID = f"ZIKABR{ANO}"
-URL = f"https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Zikavirus/json/{FILE_ID}.json.zip"
+FILE_ID = f"CHIKBR{ANO}"
+URL = f"https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Chikungunya/xml/{FILE_ID}.xml.zip"
 
-BASE_PATH = "./data/bronze/zika"
+BASE_PATH = "./data/bronze/chikungunya"
 
 LANDING_PATH = f"{BASE_PATH}/landing"
 DELTA_PATH = f"{BASE_PATH}/delta"
@@ -49,17 +49,19 @@ print("Download concluído")
 
 with zipfile.ZipFile(RAW_ZIP_PATH, "r") as z:
     z.extractall(LANDING_PATH)
-    json_file = [f for f in z.namelist() if f.endswith(".json")][0]
+    xml_file = [f for f in z.namelist() if f.endswith(".xml")][0]
 
-JSON_PATH = os.path.join(LANDING_PATH, json_file)
+XML_PATH = os.path.join(LANDING_PATH, xml_file)
 
-print(f"JSON salvo em: {JSON_PATH}")
+print(f"XML salvo em: {XML_PATH}")
 
 df = spark.read \
+    .option("header", True) \
+    .option("inferSchema", False) \
+    .option("sep", ",") \
+    .option("encoding", "iso-8859-1") \
     .option("mode", "PERMISSIVE") \
-    .option("multiLine", True) \
-    .json(JSON_PATH) \
-    .cache()
+    .xml(XML_PATH)
 
 print("Schema:")
 df.printSchema()
@@ -67,16 +69,7 @@ df.printSchema()
 print("Preview:")
 df.show(5, truncate=False)
 
-if "_corrupt_record" in df.columns:
-    df_valid = df.filter(col("_corrupt_record").isNull())
-    df_invalid = df.filter(col("_corrupt_record").isNotNull())
-
-    print("Registros corrompidos:")
-    df_invalid.show(5, truncate=False)
-else:
-    df_valid = df
-
-df_valid.write \
+df.write \
     .format("delta") \
     .mode("append") \
     .save(DELTA_PATH)
