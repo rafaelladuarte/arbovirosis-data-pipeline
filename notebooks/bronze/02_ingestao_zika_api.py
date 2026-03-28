@@ -12,80 +12,107 @@ import requests
 import zipfile
 from pyspark.sql import SparkSession
 
-ANO = "23"
+from pyspark.sql.functions import col, lit
 
-FILE_ID = f"ZIKABR{ANO}"
-URL = f"https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Zikavirus/json/{FILE_ID}.json.zip"
+ANOS = [
+    "20",
+    # "21","22", "23", "24", "25"
+]
+
 
 BASE_PATH = "./data/bronze/zika"
 
-LANDING_PATH = f"{BASE_PATH}/landing"
+LANDING_BASE_PATH = f"{BASE_PATH}/landing"
 DELTA_PATH = f"{BASE_PATH}/delta"
 
-RAW_ZIP_PATH = f"{LANDING_PATH}/{FILE_ID}.zip"
 
-
-os.makedirs(LANDING_PATH, exist_ok=True)
+os.makedirs(LANDING_BASE_PATH, exist_ok=True)
 os.makedirs(DELTA_PATH, exist_ok=True)
 
 
 spark = SparkSession.builder \
-    .appName("dengue-bronze-local") \
+    .appName("zika-bronze-local") \
     .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.1.0") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .getOrCreate()
 
 
-print(f"Baixando: {URL}")
+for ano in ANOS:
+    YEAR = f"20{ano}"
+    FILE_ID = f"ZIKABR{ano}"
+    URL = f"https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Zikavirus/json/{FILE_ID}.json.zip"
 
-response = requests.get(URL)
-response.raise_for_status()
+    # Particionamento da landing por ano: landing/2020/ZIKABR20.zip
+    LANDING_YEAR_PATH = f"{LANDING_BASE_PATH}/{YEAR}"
+    os.makedirs(LANDING_YEAR_PATH, exist_ok=True)
+    RAW_ZIP_PATH = f"{LANDING_YEAR_PATH}/{FILE_ID}.zip"
 
-with open(RAW_ZIP_PATH, "wb") as f:
-    f.write(response.content)
+    print(f"\n==============================================")
+    print(f"Iniciando ingestão do ano: {YEAR}")
+    print(f"Baixando: {URL}")
 
-print("Download concluído")
+    try:
+        response = requests.get(URL)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Erro ao baixar {URL}: {e}")
+        continue
 
-with zipfile.ZipFile(RAW_ZIP_PATH, "r") as z:
-    z.extractall(LANDING_PATH)
-    json_file = [f for f in z.namelist() if f.endswith(".json")][0]
+    with open(RAW_ZIP_PATH, "wb") as f:
+        f.write(response.content)
 
-JSON_PATH = os.path.join(LANDING_PATH, json_file)
+    print("Download concluído")
 
-print(f"JSON salvo em: {JSON_PATH}")
+    with zipfile.ZipFile(RAW_ZIP_PATH, "r") as z:
+        z.extractall(LANDING_YEAR_PATH)
+        json_file = [f for f in z.namelist() if f.endswith(".json")][0]
 
-df = spark.read \
-    .option("mode", "PERMISSIVE") \
-    .option("multiLine", True) \
-    .json(JSON_PATH) \
-    .cache()
+    JSON_PATH = os.path.join(LANDING_YEAR_PATH, json_file)
 
-print("Schema:")
-df.printSchema()
+    print(f"JSON salvo em: {JSON_PATH}")
 
-print("Preview:")
-df.show(5, truncate=False)
+    df = spark.read \
+        .option("mode", "PERMISSIVE") \
+        .option("multiLine", True) \
+        .json(JSON_PATH) \
+        .withColumn("ano", lit(YEAR)) \
+        .cache()
 
-if "_corrupt_record" in df.columns:
-    df_valid = df.filter(col("_corrupt_record").isNull())
-    df_invalid = df.filter(col("_corrupt_record").isNotNull())
+    print(f"Schema do ano {YEAR}:")
+    df.printSchema()
 
-    print("Registros corrompidos:")
-    df_invalid.show(5, truncate=False)
-else:
-    df_valid = df
+    if "_corrupt_record" in df.columns:
+        df_valid = df.filter(col("_corrupt_record").isNull())
+        df_invalid = df.filter(col("_corrupt_record").isNotNull())
 
-df_valid.write \
-    .format("delta") \
-    .mode("append") \
-    .save(DELTA_PATH)
+        invalid_count = df_invalid.count()
+        if invalid_count > 0:
+            print(f"ATENÇÃO: {invalid_count} Registros corrompidos no ano 20{ano}:")
+            df_invalid.show(5, truncate=False)
+    else:
+        df_valid = df
 
-print(f"Dados salvos em Delta: {DELTA_PATH}")
+    if "_corrupt_record" in df_valid.columns:
+        df_valid = df_valid.drop("_corrupt_record")
 
+    df_valid.write \
+        .format("delta") \
+        .mode("append") \
+        .partitionBy("ano") \
+        .option("mergeSchema", "true") \
+        .save(DELTA_PATH)
+
+    print(f"Dados do ano {YEAR} salvos em Delta (partição ano={YEAR}): {DELTA_PATH}")
+    
+    df.unpersist()
+
+print("\n==============================================")
+print("Ingestão completa de todos os anos disponíveis.")
 df_delta = spark.read.format("delta").load(DELTA_PATH)
 
 print("Validação (Delta):")
 df_delta.show(5, truncate=False)
+print(f"Total de registros na tabela Delta: {df_delta.count()}")
 
 spark.stop()

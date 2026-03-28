@@ -12,20 +12,17 @@ import requests
 import zipfile
 from pyspark.sql import SparkSession
 
-ANO = "23"
-
-FILE_ID = f"DENGBR{ANO}"
-URL = f"https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Dengue/csv/{FILE_ID}.csv.zip"
+ANOS = [
+    "20", "21"
+    # "22", "23", "24", "25"
+]
 
 BASE_PATH = "./data/bronze/dengue"
 
-LANDING_PATH = f"{BASE_PATH}/landing"
+LANDING_BASE_PATH = f"{BASE_PATH}/landing"
 DELTA_PATH = f"{BASE_PATH}/delta"
 
-RAW_ZIP_PATH = f"{LANDING_PATH}/{FILE_ID}.zip"
-
-
-os.makedirs(LANDING_PATH, exist_ok=True)
+os.makedirs(LANDING_BASE_PATH, exist_ok=True)
 os.makedirs(DELTA_PATH, exist_ok=True)
 
 
@@ -37,48 +34,68 @@ spark = SparkSession.builder \
     .getOrCreate()
 
 
-print(f"Baixando: {URL}")
+for ano in ANOS:
+    YEAR = f"20{ano}"
+    FILE_ID = f"DENGBR{ano}"
+    URL = f"https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SINAN/Dengue/csv/{FILE_ID}.csv.zip"
 
-response = requests.get(URL)
-response.raise_for_status()
+    LANDING_YEAR_PATH = f"{LANDING_BASE_PATH}/{YEAR}"
+    os.makedirs(LANDING_YEAR_PATH, exist_ok=True)
+    RAW_ZIP_PATH = f"{LANDING_YEAR_PATH}/{FILE_ID}.zip"
 
-with open(RAW_ZIP_PATH, "wb") as f:
-    f.write(response.content)
+    print(f"\n==============================================")
+    print(f"Iniciando ingestão do ano: {YEAR}")
+    print(f"Baixando: {URL}")
 
-print("Download concluído")
+    try:
+        response = requests.get(URL)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Erro ao baixar {URL}: {e}")
+        continue
 
-with zipfile.ZipFile(RAW_ZIP_PATH, "r") as z:
-    z.extractall(LANDING_PATH)
-    csv_file = [f for f in z.namelist() if f.endswith(".csv")][0]
+    with open(RAW_ZIP_PATH, "wb") as f:
+        f.write(response.content)
 
-CSV_PATH = os.path.join(LANDING_PATH, csv_file)
+    print("Download concluído")
 
-print(f"CSV salvo em: {CSV_PATH}")
+    with zipfile.ZipFile(RAW_ZIP_PATH, "r") as z:
+        z.extractall(LANDING_YEAR_PATH)
+        csv_file = [f for f in z.namelist() if f.endswith(".csv")][0]
 
-df = spark.read \
-    .option("header", True) \
-    .option("inferSchema", False) \
-    .option("sep", ",") \
-    .option("encoding", "iso-8859-1") \
-    .option("mode", "PERMISSIVE") \
-    .csv(CSV_PATH)
+    CSV_PATH = os.path.join(LANDING_YEAR_PATH, csv_file)
 
-print("Schema:")
-df.printSchema()
+    print(f"CSV salvo em: {CSV_PATH}")
 
-print("Preview:")
-df.show(5, truncate=False)
+    from pyspark.sql.functions import lit
 
-df.write \
-    .format("delta") \
-    .mode("append") \
-    .save(DELTA_PATH)
+    df = spark.read \
+        .option("header", True) \
+        .option("inferSchema", False) \
+        .option("sep", ",") \
+        .option("encoding", "iso-8859-1") \
+        .option("mode", "PERMISSIVE") \
+        .csv(CSV_PATH) \
+        .withColumn("ano", lit(YEAR))
 
-print(f"Dados salvos em Delta: {DELTA_PATH}")
+    print(f"Schema do ano {YEAR}:")
+    df.printSchema()
 
+    df.write \
+        .format("delta") \
+        .mode("append") \
+        .partitionBy("ano") \
+        .option("mergeSchema", "true") \
+        .save(DELTA_PATH)
+
+    print(f"Dados do ano {YEAR} salvos em Delta (partição ano={YEAR}): {DELTA_PATH}")
+
+print("\n==============================================")
+print("Ingestão completa de todos os anos disponíveis.")
 df_delta = spark.read.format("delta").load(DELTA_PATH)
 
 print("Validação (Delta):")
 df_delta.show(5, truncate=False)
+print(f"Total de registros na tabela Delta: {df_delta.count()}")
 
 spark.stop()
